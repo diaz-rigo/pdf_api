@@ -12,7 +12,15 @@ class Settings:
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
     EXTRACTED_FOLDER = os.getenv("EXTRACTED_FOLDER", "extracted_texts")
     TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
+            # Configuración de procesamiento
+    MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB máximo
+    DEFAULT_DPI = 200
+    DEFAULT_BATCH_SIZE = 15
+    MAX_CONCURRENT_PAGES = 8
+    OCR_TIMEOUT_PER_PAGE = 30  # segundos
+    
+    # Memoria
+    MAX_MEMORY_USAGE = 1024 * 1024 * 1024  # 1GB
     ALLOWED_ORIGINS = os.getenv(
         "ALLOWED_ORIGINS",
         "http://localhost:4200"

@@ -27,7 +27,7 @@ Pensada para integrarse fácilmente con **Angular**, y soportar documentos digit
 
 ## 🧱 Tecnologías
 
-* **Python 3.9+**
+* **Python 3.11 (recomendado)**
 * **FastAPI**
 * **Uvicorn**
 * **PyMuPDF (fitz)**
@@ -42,6 +42,8 @@ Pensada para integrarse fácilmente con **Angular**, y soportar documentos digit
 ## 📋 Requisitos previos
 
 ### 🐍 Python
+> ⚠️ Python 3.13+ (incluido 3.14) **NO es compatible** actualmente con PyMuPDF en Windows.
+> Usar Python 3.11 evita errores de compilación nativa.
 
 Instalar **Python 3.9 o superior**:
 
@@ -107,11 +109,13 @@ pdf_api/
 ### 1️⃣ Crear y activar entorno virtual
 
 ```bash
-python -m venv venv
+py -3.11 -m venv venv
+
 venv\Scripts\activate
 ```
 
 ---
+Esto garantiza que el entorno virtual use **Python 3.11**, incluso si el sistema tiene otra versión por defecto.
 
 ### 2️⃣ Instalar dependencias
 
