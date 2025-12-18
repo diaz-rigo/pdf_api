@@ -1,5 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
+from pathlib import Path
+
 import os
 import time
 from typing import Optional
@@ -20,7 +22,7 @@ pdf_storage = {}
 
 @router.post("/upload", response_model=PDFUploadResponse)
 async def upload_pdf(file: UploadFile = File(...), use_ocr: bool = Query(True)):
-    """Sube un PDF y extrae su texto"""
+    """Sube un PDF y extrae su texto, generando PDF con capa OCR si es necesario"""
     try:
         # Validar que sea PDF
         if not file.filename.lower().endswith('.pdf'):
@@ -37,8 +39,12 @@ async def upload_pdf(file: UploadFile = File(...), use_ocr: bool = Query(True)):
         with open(pdf_path, "wb") as f:
             f.write(file_bytes)
         
-        # Extraer texto
-        text, pages, used_ocr = pdf_service.extract_text_from_pdf(pdf_path, use_ocr=use_ocr)
+        # Extraer texto Y generar PDF con OCR si es necesario
+        text, pages, used_ocr, ocr_pdf_path = pdf_service.extract_text_from_pdf(
+            pdf_path, 
+            use_ocr=use_ocr, 
+            generate_ocr_pdf=True
+        )
         
         # Guardar texto extraído
         text_path = pdf_service.save_extracted_text(text, pdf_id)
@@ -48,11 +54,20 @@ async def upload_pdf(file: UploadFile = File(...), use_ocr: bool = Query(True)):
             'filename': file.filename,
             'pdf_path': pdf_path,
             'text_path': text_path,
+            'ocr_pdf_path': ocr_pdf_path,  # Nueva ruta al PDF con OCR
             'pages': pages,
             'upload_time': time.time(),
             'text': text,
-            'size': len(file_bytes)
+            'size': len(file_bytes),
+            'used_ocr': used_ocr
         }
+        
+        # Preparar mensaje
+        message = f"PDF procesado exitosamente. {pages} páginas."
+        if used_ocr:
+            message += " Se usó OCR."
+            if ocr_pdf_path:
+                message += f" PDF con capa OCR generado: {Path(ocr_pdf_path).name}"
         
         return PDFUploadResponse(
             id=pdf_id,
@@ -60,11 +75,13 @@ async def upload_pdf(file: UploadFile = File(...), use_ocr: bool = Query(True)):
             size=len(file_bytes),
             pages=pages,
             extracted_text_path=text_path,
-            message=f"PDF procesado exitosamente. {'Se usó OCR' if used_ocr else 'No se requirió OCR'}"
+            ocr_pdf_path=ocr_pdf_path,  # Incluir en respuesta
+            message=message
         )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando PDF: {str(e)}")
+
 
 @router.post("/{pdf_id}/search", response_model=SearchResponse)
 async def search_pdf(pdf_id: str, search_request: SearchRequest):
@@ -218,3 +235,25 @@ async def quick_search(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en búsqueda rápida: {str(e)}")
+
+
+@router.get("/{pdf_id}/ocr-pdf")
+async def get_ocr_pdf(pdf_id: str):
+    """Obtiene el PDF con capa de texto OCR"""
+    if pdf_id not in pdf_storage:
+        raise HTTPException(status_code=404, detail="PDF no encontrado")
+    
+    pdf_data = pdf_storage[pdf_id]
+    ocr_pdf_path = pdf_data.get('ocr_pdf_path')
+    
+    if not ocr_pdf_path or not os.path.exists(ocr_pdf_path):
+        raise HTTPException(status_code=404, detail="PDF con OCR no disponible")
+    
+    filename = Path(pdf_data['filename']).stem + "_OCR.pdf"
+    
+    return FileResponse(
+        ocr_pdf_path, 
+        media_type='application/pdf',
+        filename=filename,
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+    )

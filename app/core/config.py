@@ -18,7 +18,12 @@ class Settings:
     DEFAULT_BATCH_SIZE = 15
     MAX_CONCURRENT_PAGES = 8
     OCR_TIMEOUT_PER_PAGE = 30  # segundos
-    
+    OCR_PDF_COMPRESSION = True
+    OCR_PDF_DPI = 150
+    OCR_TEXT_COLOR = (0, 0, 0)  # Negro
+    OCR_TEXT_OPACITY = 0.01  # Casi invisible
+    OCR_TEXT_FONTSIZE = 11
+    OCR_TEXT_FONT = "helv"
     # Memoria
     MAX_MEMORY_USAGE = 1024 * 1024 * 1024  # 1GB
     ALLOWED_ORIGINS = os.getenv(

@@ -12,6 +12,8 @@ class PDFUploadResponse(BaseModel):
     size: int
     pages: int
     extracted_text_path: str
+    ocr_pdf_path: Optional[str] = None  # Nueva opción
+
     message: str
 
 
