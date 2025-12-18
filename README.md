@@ -88,6 +88,23 @@ tesseract --version
 ```
 
 ---
+### 📦 Idioma Español para OCR (REQUERIDO)
+
+Tesseract **NO incluye siempre el idioma español por defecto**.  
+Es obligatorio descargar el archivo de entrenamiento:
+
+👉 https://github.com/tesseract-ocr/tessdata/blob/main/spa.traineddata
+
+#### 📥 Pasos
+
+1. Descargar el archivo **`spa.traineddata`**
+2. Ubicarlo en la carpeta `tessdata` de Tesseract
+
+##### 📍 Rutas comunes
+
+**Windows**
+```txt
+C:\Program Files\Tesseract-OCR\tessdata\spa.traineddata
 
 ## 📂 Estructura del proyecto
 
@@ -179,33 +196,3 @@ Desde aquí puedes:
 POST http://localhost:8000/upload
 ```
 
-> Tailwind se utiliza únicamente para la UI. Todo el procesamiento pesado ocurre en la API.
-
----
-
-## 🧪 Recomendaciones de prueba
-
-* Probar con:
-
-  * 📄 PDF digital
-  * 📄 PDF escaneado
-* Verificar que ambos devuelvan texto
-* Probar búsquedas con y sin regex
-
----
-
-## 🧠 Próximos pasos sugeridos
-
-* 🔍 Indexación avanzada (SQLite / PostgreSQL)
-* ⚡ Motor de búsqueda optimizado
-* 🐳 Dockerización
-* ☁️ Despliegue en servidor o cloud
-
----
-
-## 🏁 Estado del proyecto
-
-✅ Listo para desarrollo y pruebas locales
-🚀 Preparado para escalar a producción
-
----
