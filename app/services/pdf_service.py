@@ -1,11 +1,12 @@
 # C:\Angular\OCR\pdf_api\app\services\pdf_service.py
-
+import re
 import fitz  # PyMuPDF
 import re
 import os
 import uuid
 import hashlib
 import logging
+import io
 import concurrent.futures
 from typing import List, Tuple, Optional, Dict, Any
 from datetime import datetime
@@ -16,7 +17,7 @@ import tempfile
 import gc
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import base64
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -280,99 +281,56 @@ class PDFService:
         except Exception as e:
             logger.error(f"OCR falló en página {page_num + 1}: {e}")
             return ""
-    
     def _generate_ocr_pdf(self, original_doc: fitz.Document, extracted_text: str, 
                         original_path: str, total_pages: int) -> str:
         """
-        Genera un clon del PDF con capa de texto OCR integrada y SELLECIONABLE
+        Genera un clon del PDF con capa de texto OCR integrada y SELECTABLE
+        PRESERVANDO EL FONDO ORIGINAL EXACTAMENTE COMO iLovePDF
+        
+        iLovePDF funciona así:
+        1. Mantiene el PDF original exactamente igual (mismo fondo, imágenes, etc.)
+        2. Añade una capa de texto invisible pero seleccionable encima
+        3. El texto sigue el layout original pero es seleccionable y buscable
         """
         ocr_doc = None
         try:
-            logger.info("Generando PDF con capa de texto OCR seleccionable...")
+            logger.info("Generando PDF con capa de texto OCR (estilo iLovePDF)...")
             
-            # Crear nuevo documento desde el original para preservar metadatos
+            # Crear nuevo documento COPIANDO las páginas originales
             ocr_doc = fitz.open()  # Crear documento vacío
+            
+            # COPIAR METADATOS DEL DOCUMENTO ORIGINAL
+            if original_doc.metadata:
+                ocr_doc.set_metadata(original_doc.metadata)
             
             # Procesar cada página
             for page_num in range(total_pages):
                 # Obtener página original
                 original_page = original_doc.load_page(page_num)
                 
-                # Crear nueva página con mismo tamaño
-                new_page = ocr_doc.new_page(width=original_page.rect.width, 
-                                        height=original_page.rect.height)
+                # 1. COPIAR LA PÁGINA ORIGINAL COMPLETA (incluyendo imágenes y fondo)
+                # Usar insert_pdf para copiar exactamente la página
+                ocr_doc.insert_pdf(
+                    original_doc,  # Documento de origen
+                    from_page=page_num,  # Página de inicio
+                    to_page=page_num,    # Página final (solo esta)
+                )
                 
-                # Insertar imagen original como fondo usando insert_image
-                # Obtener pixmap de la página original
-                pix = original_page.get_pixmap(dpi=150)
-                img_bytes = pix.tobytes("png")
-                
-                # Crear rectángulo para la imagen
-                rect = original_page.rect
-                
-                # Insertar imagen como fondo
-                new_page.insert_image(rect, stream=img_bytes)
-                
-                # Extraer texto para esta página del texto extraído
+                # 2. Obtener el texto OCR específico de esta página
                 page_text = self._extract_page_text(extracted_text, page_num + 1)
                 
-                if page_text:
-                    # Limpiar y preparar el texto para OCR
-                    page_text = self._clean_text_for_ocr_layer(page_text)
+                if page_text and page_text.strip():
+                    # 3. Limpiar y preparar el texto
+                    clean_text = self._clean_text_for_ocr_layer(page_text)
                     
-                    # Configurar el área de texto (margenes)
-                    margin = 20  # Margen en puntos
-                    text_rect = fitz.Rect(
-                        margin,
-                        margin,
-                        rect.width - margin,
-                        rect.height - margin
-                    )
+                    # 4. Obtener la página recién insertada
+                    new_page = ocr_doc[page_num]
                     
-                    # Insertar texto invisible pero SELLECIONABLE
-                    # Usamos color blanco con opacidad casi 0 para algunos visores PDF
-                    # Pero algunos visores necesitan opacidad 0
-                    new_page.insert_textbox(
-                        text_rect,
-                        page_text,
-                        fontsize=11,
-                        color=(0, 0, 0),  # Negro - importante para selección
-                        opacity=0.01,  # Casi invisible pero presente
-                        fontname="helv",
-                        encoding=fitz.TEXT_ENCODING_LATIN,
-                        align=fitz.TEXT_ALIGN_LEFT,
-                        expandtabs=8,
-                        render_mode=3,  # Modo 3: relleno + contorno invisible
-                    )
-                    
-                    # ALTERNATIVA: Insertar texto completamente invisible pero seleccionable
-                    # Para algunos visores, necesitamos un método diferente
-                    text_widget = {
-                        "rect": text_rect,
-                        "text": page_text,
-                        "fontsize": 11,
-                        "fontname": "helv",
-                        "text_color": (0, 0, 0),
-                        "fill_color": (1, 1, 1, 0),  # Relleno transparente
-                        "border_width": 0,
-                    }
-                    
-                    # Agregar anotación de texto invisible
-                    annot = new_page.add_freetext_annot(
-                        text_rect,
-                        page_text,
-                        fontsize=11,
-                        fontname="helv",
-                        text_color=(0, 0, 0),
-                        fill_color=(1, 1, 1, 0),  # Completamente transparente
-                        border_width=0,
-                    )
-                    
-                    # Hacer la anotación no imprimible pero visible para selección
-                    annot.set_flags(fitz.PDF_ANNOT_IS_HIDDEN)
-                    annot.update()
+                    # 5. Añadir texto OCR como capa invisible pero seleccionable
+                    # Usar un método más directo y efectivo
+                    self._add_ocr_text_layer(new_page, clean_text, original_page.rect)
             
-            # Generar nombre de archivo
+            # 6. Generar nombre de archivo
             original_name = Path(original_path).stem
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             ocr_pdf_path = os.path.join(
@@ -380,45 +338,211 @@ class PDFService:
                 f"{original_name}_OCR_{timestamp}.pdf"
             )
             
-            # Guardar PDF optimizado para texto seleccionable
+            # Asegurar que la carpeta existe
+            os.makedirs(os.path.dirname(ocr_pdf_path), exist_ok=True)
+            
+            # 7. Guardar el PDF con optimizaciones
             ocr_doc.save(
-                ocr_pdf_path, 
-                deflate=True, 
-                garbage=3,
-                clean=True,
-                ascii=True,  # Ayuda con compatibilidad
-                linear=True,  # Optimización para web
-                no_new_id=True  # Mantener IDs originales
+                ocr_pdf_path,
+                deflate=True,      # Compresión
+                garbage=3,         # Limpieza de objetos no usados
+                pretty=True,       # Formato legible
+                clean=True,        # Limpiar estructura
+                linear=True,       # Optimizado para web
+                encryption=fitz.PDF_ENCRYPT_NONE,  # Sin encriptación
             )
             
-            # Verificar que el texto sea seleccionable
-            self._verify_selectable_text(ocr_doc, ocr_pdf_path)
+            logger.info(f"✅ PDF con capa OCR generado: {ocr_pdf_path} ({os.path.getsize(ocr_pdf_path)} bytes)")
             
-            logger.info(f"PDF con capa OCR seleccionable generado: {ocr_pdf_path}")
-            return ocr_pdf_path
-            
+            # 8. Verificar que el archivo es válido
+            if os.path.exists(ocr_pdf_path) and os.path.getsize(ocr_pdf_path) > 0:
+                # Abrir y cerrar para verificar que no está corrupto
+                test_doc = fitz.open(ocr_pdf_path)
+                test_doc.close()
+                logger.info("✅ PDF verificado y listo para usar")
+                return ocr_pdf_path
+            else:
+                logger.error("❌ PDF generado es inválido o está vacío")
+                return None
+                
         except Exception as e:
-            logger.error(f"Error generando PDF con OCR seleccionable: {e}")
-            # Fallback: crear PDF solo con texto
-            return self._create_fallback_ocr_pdf(extracted_text, original_path, total_pages)
+            logger.error(f"❌ Error generando PDF con OCR: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            # Intentar método alternativo
+            return self._create_simple_ocr_pdf(original_doc, extracted_text, original_path, total_pages)
         finally:
             if ocr_doc:
                 ocr_doc.close()
+    def _add_ocr_text_layer(self, page: fitz.Page, text: str, page_rect: fitz.Rect):
+        """
+        Añade texto OCR como capa invisible pero seleccionable en la página
+        
+        Técnica usada:
+        - Texto con color blanco (invisible sobre fondo blanco)
+        - Fuente normal y tamaño legible
+        - Opacidad total (no transparente, solo blanco)
+        """
+        try:
+            # Configurar márgenes
+            margin = 20  # Puntos
+            text_rect = fitz.Rect(
+                margin,
+                margin,
+                page_rect.width - margin,
+                page_rect.height - margin
+            )
+            
+            # DIVIDIR el texto en bloques más pequeños para mejor manejo
+            text_blocks = text.split('\n')
+            current_y = text_rect.y0
+            
+            for block in text_blocks:
+                if not block.strip():
+                    current_y += 12  # Espacio entre párrafos
+                    continue
+                    
+                # Insertar cada bloque de texto por separado
+                # Usar color blanco (1,1,1) - invisible en fondo blanco
+                # Usar render_mode=3 para texto invisible pero selectable
+                page.insert_text(
+                    point=(text_rect.x0, current_y),
+                    text=block,
+                    fontsize=11,  # Tamaño normal pero invisible
+                    fontname="helv",
+                    color=(1, 1, 1),  # BLANCO PURO - INVISIBLE
+                    render_mode=3,  # Render mode 3: texto invisible
+                    # fill_color=(1, 1, 1, 0),  # Fondo transparente (opcional)
+                )
+                
+                current_y += 14  # Interlineado
+            
+            logger.debug(f"Texto OCR añadido como capa invisible")
+            
+        except Exception as e:
+            logger.warning(f"No se pudo añadir capa de texto OCR: {e}")
+            # Método alternativo más simple
+            try:
+                # Insertar texto como anotación oculta
+                annot = page.add_freetext_annot(
+                    text_rect,
+                    text,
+                    fontsize=11,
+                    fontname="helv",
+                    text_color=(1, 1, 1),  # Texto blanco
+                    fill_color=(1, 1, 1, 0),  # Fondo transparente
+                    border_color=(1, 1, 1, 0),  # Sin borde
+                )
+                # Marcar como oculta
+                annot.set_flags(fitz.PDF_ANNOT_IS_HIDDEN)
+                annot.update()
+            except:
+                # Último recurso: texto muy pequeño
+                page.insert_textbox(
+                    text_rect,
+                    text,
+                    fontsize=0.1,  # Texto casi invisible
+                    color=(1, 1, 1),  # Blanco
+                    fontname="helv",
+                    align=0,
+                )
+    def _create_simple_ocr_pdf(self, original_doc: fitz.Document, extracted_text: str,
+                            original_path: str, total_pages: int) -> str:
+        """
+        Método alternativo simplificado estilo iLovePDF
+        """
+        try:
+            logger.info("Usando método simple (fallback)...")
+            
+            # Crear nuevo documento COPIANDO TODO
+            ocr_doc = fitz.open()
+            
+            # Copiar todo el documento original
+            ocr_doc.insert_pdf(original_doc)
+            
+            # Añadir texto OCR a cada página
+            for page_num in range(total_pages):
+                page = ocr_doc[page_num]
+                page_text = self._extract_page_text(extracted_text, page_num + 1)
+                
+                if page_text and page_text.strip():
+                    clean_text = self._clean_text_for_ocr_layer(page_text)
+                    
+                    # Añadir texto con el método simplificado
+                    rect = page.rect
+                    margin = 20
+                    text_rect = fitz.Rect(
+                        margin, margin, 
+                        rect.width - margin, 
+                        rect.height - margin
+                    )
+                    
+                    # Texto blanco invisible
+                    page.insert_textbox(
+                        text_rect,
+                        clean_text,
+                        fontsize=12,
+                        color=(1, 1, 1),  # Blanco puro
+                        fontname="helv",
+                        align=0,  # Alineación izquierda
+                        render_mode=3,  # Texto invisible
+                    )
+            
+            # Guardar
+            original_name = Path(original_path).stem
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ocr_pdf_path = os.path.join(
+                settings.UPLOAD_FOLDER,
+                f"{original_name}_OCR_SIMPLE_{timestamp}.pdf"
+            )
+            
+            os.makedirs(os.path.dirname(ocr_pdf_path), exist_ok=True)
+            ocr_doc.save(ocr_pdf_path, deflate=True, clean=True)
+            ocr_doc.close()
+            
+            logger.info(f"PDF simple generado: {ocr_pdf_path}")
+            return ocr_pdf_path
+            
+        except Exception as e:
+            logger.error(f"Error en método simple: {e}")
+            return None
+
     def _clean_text_for_ocr_layer(self, text: str) -> str:
-        """Limpia el texto para la capa OCR"""
-        # Remover marcadores de página
-        text = re.sub(r'--- Página \d+ ---\n', '', text)
+        """
+        Limpia el texto para la capa OCR
         
-        # Normalizar espacios y saltos de línea
-        text = re.sub(r'\n{3,}', '\n\n', text)  # Máximo 2 saltos consecutivos
-        text = re.sub(r'[ \t]+', ' ', text)  # Normalizar espacios
+        iLovePDF mantiene:
+        - Saltos de línea naturales
+        - Espaciado coherente
+        - Caracteres especiales legibles
+        """
+        if not text:
+            return ""
         
-        # Limitar longitud por página (evitar sobrecarga)
-        max_chars_per_page = 5000
-        if len(text) > max_chars_per_page:
-            text = text[:max_chars_per_page] + "... [texto truncado]"
+        # 1. Eliminar marcadores de página innecesarios
+        text = re.sub(r'--- Página \d+ ---', '', text)
         
-        return text.strip()
+        # 2. Limpiar espacios múltiples pero mantener saltos de línea
+        text = re.sub(r'[ \t]+', ' ', text)
+        
+        # 3. Mantener saltos de línea significativos
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if line:  # Solo mantener líneas no vacías
+                cleaned_lines.append(line)
+        
+        # 4. Unir con saltos de línea pero no demasiados
+        result = '\n'.join(cleaned_lines)
+        
+        # 5. Limitar longitud máxima por seguridad
+        if len(result) > 10000:  # Máximo 10k caracteres por página
+            result = result[:10000] + "... [texto truncado]"
+        
+        return result
     def _verify_selectable_text(self, doc: fitz.Document, filepath: str):
         """Verifica que el texto sea seleccionable"""
         try:
@@ -494,23 +618,36 @@ class PDFService:
             logger.error(f"Error creando PDF fallback: {e}")
             return None
     def _extract_page_text(self, full_text: str, page_number: int) -> str:
-        """Extrae el texto de una página específica del texto completo"""
-        pattern = f"--- Página {page_number} ---\n"
-        start_pos = full_text.find(pattern)
-        
-        if start_pos == -1:
+        """
+        Extrae el texto de una página específica del texto completo
+        """
+        try:
+            # Buscar el marcador de página
+            pattern = rf'--- Página {page_number} ---\n(.*?)(?=\n--- Página|\Z)'
+            match = re.search(pattern, full_text, re.DOTALL)
+            
+            if match:
+                return match.group(1).strip()
+            else:
+                # Alternativa: buscar por número de página
+                lines = full_text.split('\n')
+                in_target_page = False
+                page_text = []
+                
+                for line in lines:
+                    if f'--- Página {page_number} ---' in line:
+                        in_target_page = True
+                        continue
+                    elif in_target_page and line.startswith('--- Página'):
+                        break
+                    elif in_target_page:
+                        page_text.append(line)
+                
+                return '\n'.join(page_text).strip()
+                
+        except Exception as e:
+            logger.error(f"Error extrayendo texto página {page_number}: {e}")
             return ""
-        
-        start_pos += len(pattern)
-        
-        # Buscar inicio de la siguiente página
-        next_pattern = f"--- Página {page_number + 1} ---"
-        end_pos = full_text.find(next_pattern, start_pos)
-        
-        if end_pos == -1:
-            return full_text[start_pos:].strip()
-        else:
-            return full_text[start_pos:end_pos].strip()
     
     def process_multiple_pdfs(self, pdf_paths: List[str], use_ocr: bool = True, 
                             language: str = 'spa', max_workers: int = 3) -> List[Dict[str, Any]]:

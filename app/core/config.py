@@ -24,6 +24,9 @@ class Settings:
     OCR_TEXT_OPACITY = 0.01  # Casi invisible
     OCR_TEXT_FONTSIZE = 11
     OCR_TEXT_FONT = "helv"
+    # UPLOAD_FOLDER = "uploads"
+    # MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    ALLOWED_EXTENSIONS = {'pdf'}
     # Memoria
     MAX_MEMORY_USAGE = 1024 * 1024 * 1024  # 1GB
     ALLOWED_ORIGINS = os.getenv(
